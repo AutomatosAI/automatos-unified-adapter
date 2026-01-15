@@ -1,4 +1,4 @@
- """CLI entry point for the Unified Adapter."""
+"""CLI entry point for the Unified Adapter."""
  
  from __future__ import annotations
  
