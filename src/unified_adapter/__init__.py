@@ -1,1 +1,1 @@
- """Automatos Unified Integrations Adapter package."""
+"""Automatos Unified Integrations Adapter package."""
