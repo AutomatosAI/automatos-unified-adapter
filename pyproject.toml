@@ -1,0 +1,43 @@
+ [project]
+ name = "automatos-unified-adapter"
+ version = "0.1.0"
+ description = "Unified Integrations Adapter MCP server for Automatos"
+ readme = "README.md"
+ requires-python = ">=3.11"
+ dependencies = [
+   "fastmcp==2.11.3",
+   "httpx>=0.27.0",
+  "psycopg[binary]>=3.2.6",
+  "pyjwt[crypto]>=2.9.0",
+   "pydantic>=2.7.0",
+   "pydantic-settings>=2.2.1",
+ ]
+ 
+ [project.optional-dependencies]
+ dev = [
+   "pytest>=8.2.0",
+   "pytest-asyncio>=0.23.7",
+   "ruff>=0.5.6",
+   "mypy>=1.10.0",
+ ]
+ 
+ [build-system]
+ requires = ["hatchling"]
+ build-backend = "hatchling.build"
+ 
+ [tool.hatch.build.targets.wheel]
+ packages = ["src/unified_adapter"]
+ 
+ [project.scripts]
+ automatos-unified-adapter = "unified_adapter.main:main"
+ 
+ [tool.ruff]
+ line-length = 100
+ target-version = "py311"
+ select = ["E", "F", "B", "I", "UP", "N"]
+ 
+ [tool.mypy]
+ python_version = "3.11"
+ warn_return_any = true
+ warn_unused_configs = true
+ strict = true
