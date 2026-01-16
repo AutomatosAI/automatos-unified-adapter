@@ -17,7 +17,7 @@ from .tool_store import ToolStore
 logger = logging.getLogger(__name__)
 
 
-async def build_server(settings: Settings) -> FastMCP:
+async def build_server(settings: Settings) -> tuple[FastMCP, object | None]:
     automatos_client = AutomatosClient(
         base_url=settings.automatos_api_base_url,
         api_key=settings.automatos_api_key,
@@ -30,9 +30,11 @@ async def build_server(settings: Settings) -> FastMCP:
     service = AdapterService(settings, automatos_client, registry)
 
     mcp = FastMCP(settings.service_name, instructions=_instructions())
-    _attach_auth(mcp, settings)
-    _attach_healthcheck(mcp)
-    mount_admin_api(mcp.app, tool_store)  # type: ignore[arg-type]
+    app = _get_http_app(mcp, settings)
+    _attach_auth(app, settings)
+    _attach_healthcheck(app)
+    if app:
+        mount_admin_api(app, tool_store)  # type: ignore[arg-type]
 
     tools = await registry.load_tools()
     for tool in tools:
@@ -40,7 +42,7 @@ async def build_server(settings: Settings) -> FastMCP:
         mcp.tool(name=tool.tool_name)(handler)
         logger.info("Registered tool: %s", tool.tool_name)
 
-    return mcp
+    return mcp, app
 
 
 def _tool_handler(
@@ -53,8 +55,7 @@ def _tool_handler(
     return handler
 
 
-def _attach_auth(mcp: FastMCP, settings: Settings) -> None:
-    app = getattr(mcp, "app", None)
+def _attach_auth(app, settings: Settings) -> None:  # type: ignore[no-untyped-def]
     if not app:
         logger.warning("FastMCP app not available; auth middleware disabled")
         return
@@ -69,6 +70,8 @@ def _attach_auth(mcp: FastMCP, settings: Settings) -> None:
 
     @app.middleware("http")
     async def auth_middleware(request, call_next):  # type: ignore[no-untyped-def]
+        if request.method == "OPTIONS":
+            return await call_next(request)
         if request.url.path.endswith("/health"):
             return await call_next(request)
 
@@ -92,18 +95,55 @@ def _attach_auth(mcp: FastMCP, settings: Settings) -> None:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
 
-def _attach_healthcheck(mcp: FastMCP) -> None:
-    app = getattr(mcp, "app", None)
+def _attach_healthcheck(app) -> None:  # type: ignore[no-untyped-def]
     if not app:
         return
 
-    @app.get("/health")
-    async def healthcheck():  # type: ignore[no-untyped-def]
-        return {"status": "ok"}
+    async def healthcheck(_request):  # type: ignore[no-untyped-def]
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"status": "ok"})
+
+    app.add_route("/health", healthcheck, methods=["GET"])
 
 
 def _instructions() -> str:
     return (
         "Unified Integrations Adapter for Automatos. "
         "This server aggregates tools from Automatos and proxies to REST or MCP upstreams."
+    )
+
+
+def _get_http_app(mcp: FastMCP, settings: Settings):  # type: ignore[no-untyped-def]
+    transport = settings.adapter_transport.lower()
+    if transport in {"http"}:
+        app = mcp.http_app(transport="http", stateless_http=True, json_response=True)
+        _attach_cors(app)
+        return app
+    if transport in {"streamable-http", "streamablehttp"}:
+        app = mcp.http_app(
+            transport="streamable-http", stateless_http=True, json_response=True
+        )
+        _attach_cors(app)
+        return app
+    if transport in {"sse"}:
+        app = mcp.sse_app()
+        _attach_cors(app)
+        return app
+    return None
+
+
+def _attach_cors(app) -> None:  # type: ignore[no-untyped-def]
+    if not app:
+        return
+    try:
+        from starlette.middleware.cors import CORSMiddleware
+    except Exception:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )

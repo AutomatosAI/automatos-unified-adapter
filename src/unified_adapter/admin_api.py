@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from starlette.exceptions import HTTPException
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .auth import AuthContext
 from .tool_store import ToolRecord, ToolStore
@@ -29,6 +31,7 @@ class ToolCreate(BaseModel):
     operation_ids: List[str] = Field(default_factory=list)
     auth_config: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     credential_mode: str = Field(default="hosted", description="hosted or byo")
     credential_id: Optional[int] = None
     credential_name: Optional[str] = None
@@ -49,6 +52,7 @@ class ToolUpdate(BaseModel):
     operation_ids: Optional[List[str]] = None
     auth_config: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
     credential_mode: Optional[str] = None
     credential_id: Optional[int] = None
     credential_name: Optional[str] = None
@@ -70,6 +74,7 @@ class ToolResponse(BaseModel):
     operation_ids: List[str]
     auth_config: Dict[str, Any]
     tags: List[str]
+    metadata: Dict[str, Any]
     credential_mode: str
     credential_id: Optional[int]
     credential_name: Optional[str]
@@ -80,50 +85,59 @@ class ToolResponse(BaseModel):
 
 
 def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-def]
-    @app.get("/admin/tools", response_model=List[ToolResponse])
-    async def list_tools(request):  # type: ignore[no-untyped-def]
+    async def list_tools(request: Request) -> JSONResponse:
         _require_auth(request)
         tools = store.list_tools(enabled_only=False)
-        return [_to_response(t) for t in tools]
+        payload = [_to_response(t).model_dump() for t in tools]
+        return JSONResponse(payload)
 
-    @app.post("/admin/tools", response_model=ToolResponse)
-    async def create_tool(request, payload: ToolCreate):  # type: ignore[no-untyped-def]
+    async def create_tool(request: Request) -> JSONResponse:
         auth = _require_auth(request)
-        data = payload.model_dump()
+        try:
+            payload = await request.json()
+            data = ToolCreate(**payload).model_dump()
+        except ValidationError as exc:
+            return JSONResponse({"error": "Invalid payload", "details": exc.errors()}, status_code=422)
         if not data.get("org_id") and auth.org_id:
             data["org_id"] = auth.org_id
         tool = store.create_tool(data)
-        return _to_response(tool)
+        return JSONResponse(_to_response(tool).model_dump())
 
-    @app.get("/admin/tools/{tool_id}", response_model=ToolResponse)
-    async def get_tool(request, tool_id: int):  # type: ignore[no-untyped-def]
+    async def get_tool(request: Request) -> JSONResponse:
         _require_auth(request)
+        tool_id = int(request.path_params["tool_id"])
         tool = store.get_tool(tool_id)
         if not tool:
-            from starlette.responses import JSONResponse
-
             return JSONResponse({"error": "Not found"}, status_code=404)
-        return _to_response(tool)
+        return JSONResponse(_to_response(tool).model_dump())
 
-    @app.put("/admin/tools/{tool_id}", response_model=ToolResponse)
-    async def update_tool(request, tool_id: int, payload: ToolUpdate):  # type: ignore[no-untyped-def]
+    async def update_tool(request: Request) -> JSONResponse:
         auth = _require_auth(request)
-        data = payload.model_dump(exclude_unset=True)
+        tool_id = int(request.path_params["tool_id"])
+        try:
+            payload = await request.json()
+            data = ToolUpdate(**payload).model_dump(exclude_unset=True)
+        except ValidationError as exc:
+            return JSONResponse({"error": "Invalid payload", "details": exc.errors()}, status_code=422)
         if not data.get("org_id") and auth.org_id:
             data["org_id"] = auth.org_id
         try:
             tool = store.update_tool(tool_id, data)
         except ValueError:
-            from starlette.responses import JSONResponse
-
             return JSONResponse({"error": "Not found"}, status_code=404)
-        return _to_response(tool)
+        return JSONResponse(_to_response(tool).model_dump())
 
-    @app.delete("/admin/tools/{tool_id}")
-    async def delete_tool(request, tool_id: int):  # type: ignore[no-untyped-def]
+    async def delete_tool(request: Request) -> JSONResponse:
         _require_auth(request)
+        tool_id = int(request.path_params["tool_id"])
         store.delete_tool(tool_id)
-        return {"status": "deleted"}
+        return JSONResponse({"status": "deleted"})
+
+    app.add_route("/admin/tools", list_tools, methods=["GET"])
+    app.add_route("/admin/tools", create_tool, methods=["POST"])
+    app.add_route("/admin/tools/{tool_id:int}", get_tool, methods=["GET"])
+    app.add_route("/admin/tools/{tool_id:int}", update_tool, methods=["PUT"])
+    app.add_route("/admin/tools/{tool_id:int}", delete_tool, methods=["DELETE"])
 
 
 def _require_auth(request) -> AuthContext:  # type: ignore[no-untyped-def]
@@ -150,6 +164,7 @@ def _to_response(tool: ToolRecord) -> ToolResponse:
         operation_ids=tool.operation_ids,
         auth_config=tool.auth_config,
         tags=tool.tags,
+        metadata=tool.metadata,
         credential_mode=tool.credential_mode,
         credential_id=tool.credential_id,
         credential_name=tool.credential_name,

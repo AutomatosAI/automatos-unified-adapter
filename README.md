@@ -109,6 +109,17 @@ Basic tool registry endpoints (protected by Clerk JWT or service token):
 - `PUT /admin/tools/{tool_id}`
 - `DELETE /admin/tools/{tool_id}`
  
+## Admin UI (Local)
+
+Static admin dashboard (decoupled from Automatos UI):
+
+```
+cd admin-ui
+python -m http.server 5173
+```
+
+Open `http://localhost:5173` and connect to the adapter admin API.
+
  ## Operational Notes
  
  - The adapter does **not** log credential values.

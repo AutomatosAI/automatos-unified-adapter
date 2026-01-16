@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import psycopg
+from psycopg.types.json import Json
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class ToolRecord:
     operation_ids: List[str]
     auth_config: Dict[str, Any]
     tags: List[str]
+    metadata: Dict[str, Any]
     credential_mode: str
     credential_id: Optional[int]
     credential_name: Optional[str]
@@ -63,6 +65,7 @@ class ToolStore:
                     operation_ids JSONB,
                     auth_config JSONB,
                     tags JSONB,
+                    metadata JSONB,
                     credential_mode TEXT NOT NULL DEFAULT 'hosted',
                     credential_id INTEGER,
                     credential_name TEXT,
@@ -73,6 +76,7 @@ class ToolStore:
                 )
                 """
             )
+            conn.execute("ALTER TABLE adapter_tools ADD COLUMN IF NOT EXISTS metadata JSONB")
 
     def list_tools(self, enabled_only: bool = True) -> List[ToolRecord]:
         with self._connect() as conn:
@@ -98,9 +102,9 @@ class ToolStore:
                 INSERT INTO adapter_tools (
                     name, description, provider, category, adapter_type, enabled,
                     mcp_server_url, openapi_url, base_url, operation_ids, auth_config,
-                    tags, credential_mode, credential_id, credential_name,
+                    tags, metadata, credential_mode, credential_id, credential_name,
                     credential_environment, org_id, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -113,9 +117,10 @@ class ToolStore:
                     payload.get("mcp_server_url"),
                     payload.get("openapi_url"),
                     payload.get("base_url"),
-                    payload.get("operation_ids", []),
-                    payload.get("auth_config", {}),
-                    payload.get("tags", []),
+                    Json(payload.get("operation_ids", [])),
+                    Json(payload.get("auth_config", {})),
+                    Json(payload.get("tags", [])),
+                    Json(payload.get("metadata", {})),
                     payload.get("credential_mode", "hosted"),
                     payload.get("credential_id"),
                     payload.get("credential_name"),
@@ -149,6 +154,7 @@ class ToolStore:
             "operation_ids": payload.get("operation_ids", existing.operation_ids),
             "auth_config": payload.get("auth_config", existing.auth_config),
             "tags": payload.get("tags", existing.tags),
+            "metadata": payload.get("metadata", existing.metadata),
             "credential_mode": payload.get("credential_mode", existing.credential_mode),
             "credential_id": payload.get("credential_id", existing.credential_id),
             "credential_name": payload.get("credential_name", existing.credential_name),
@@ -166,6 +172,7 @@ class ToolStore:
                     name = %s, description = %s, provider = %s, category = %s,
                     adapter_type = %s, enabled = %s, mcp_server_url = %s, openapi_url = %s,
                     base_url = %s, operation_ids = %s, auth_config = %s, tags = %s,
+                    metadata = %s,
                     credential_mode = %s, credential_id = %s, credential_name = %s,
                     credential_environment = %s, org_id = %s, updated_at = %s
                 WHERE id = %s
@@ -180,9 +187,10 @@ class ToolStore:
                     updated["mcp_server_url"],
                     updated["openapi_url"],
                     updated["base_url"],
-                    updated["operation_ids"],
-                    updated["auth_config"],
-                    updated["tags"],
+                    Json(updated["operation_ids"]),
+                    Json(updated["auth_config"]),
+                    Json(updated["tags"]),
+                    Json(updated["metadata"]),
                     updated["credential_mode"],
                     updated["credential_id"],
                     updated["credential_name"],
@@ -213,11 +221,12 @@ class ToolStore:
             operation_ids=row[10] or [],
             auth_config=row[11] or {},
             tags=row[12] or [],
-            credential_mode=row[13] or "hosted",
-            credential_id=row[14],
-            credential_name=row[15],
-            credential_environment=row[16] or "production",
-            org_id=row[17],
-            created_at=str(row[18]),
-            updated_at=str(row[19]),
+            metadata=row[13] or {},
+            credential_mode=row[14] or "hosted",
+            credential_id=row[15],
+            credential_name=row[16],
+            credential_environment=row[17] or "production",
+            org_id=row[18],
+            created_at=str(row[19]),
+            updated_at=str(row[20]),
         )

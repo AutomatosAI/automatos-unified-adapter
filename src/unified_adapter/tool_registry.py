@@ -51,14 +51,15 @@ class ToolRegistry:
                 "credential_mode": tool.credential_mode,
                 "org_id": tool.org_id,
             }
+            tool_metadata = tool.metadata or {}
 
             if tool.adapter_type == "rest":
-                rest_tools = await self._build_rest_tools(tool, adapter_metadata, op_allowlist)
+                rest_tools = await self._build_rest_tools(tool, adapter_metadata, op_allowlist, tool_metadata)
                 tools.extend(rest_tools)
                 continue
 
             if tool.mcp_server_url and tool.mcp_server_url.startswith("http"):
-                mcp_tools = self._build_mcp_tools(tool, allowlist)
+                mcp_tools = self._build_mcp_tools(tool, allowlist, tool_metadata)
                 tools.extend(mcp_tools)
                 continue
 
@@ -76,6 +77,7 @@ class ToolRegistry:
         tool: ToolRecord,
         adapter_metadata: Dict[str, Any],
         op_allowlist: set[str],
+        tool_metadata: Dict[str, Any],
     ) -> List[AdapterTool]:
         openapi_url = adapter_metadata.get("openapi_url")
         if not openapi_url:
@@ -123,14 +125,16 @@ class ToolRegistry:
                     credential_ref=credential_ref,
                     input_model=op.input_model,
                     rest_operation=rest_operation,
-                    metadata=adapter_metadata,
+                    metadata={"adapter": adapter_metadata, "tool_metadata": tool_metadata},
                     tags=tool.tags or [],
                 )
             )
 
         return tools
 
-    def _build_mcp_tools(self, tool: ToolRecord, allowlist: set[str]) -> List[AdapterTool]:
+    def _build_mcp_tools(
+        self, tool: ToolRecord, allowlist: set[str], tool_metadata: Dict[str, Any]
+    ) -> List[AdapterTool]:
         methods = tool.operation_ids or []
         mcp_server_url = tool.mcp_server_url
         if not mcp_server_url:
@@ -156,7 +160,10 @@ class ToolRegistry:
                     credential_ref=credential_ref,
                     input_model=input_model,
                     mcp_operation=McpOperation(method=method, server_url=mcp_server_url),
-                    metadata={"credential_mode": tool.credential_mode},
+                    metadata={
+                        "adapter": {"credential_mode": tool.credential_mode},
+                        "tool_metadata": tool_metadata,
+                    },
                     tags=tool.tags or [],
                 )
             )
