@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import psycopg
+from psycopg import rows
 from psycopg.types.json import Json
 
 
@@ -45,7 +46,7 @@ class ToolStore:
         self._init_db()
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.database_url)
+        return psycopg.connect(self.database_url, row_factory=rows.dict_row)
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -208,25 +209,25 @@ class ToolStore:
 
     def _to_record(self, row) -> ToolRecord:
         return ToolRecord(
-            id=int(row[0]),
-            name=row[1],
-            description=row[2] or "",
-            provider=row[3],
-            category=row[4],
-            adapter_type=row[5],
-            enabled=bool(row[6]),
-            mcp_server_url=row[7],
-            openapi_url=row[8],
-            base_url=row[9],
-            operation_ids=row[10] or [],
-            auth_config=row[11] or {},
-            tags=row[12] or [],
-            metadata=row[13] or {},
-            credential_mode=row[14] or "hosted",
-            credential_id=row[15],
-            credential_name=row[16],
-            credential_environment=row[17] or "production",
-            org_id=row[18],
-            created_at=str(row[19]),
-            updated_at=str(row[20]),
+            id=int(row["id"]),
+            name=row["name"],
+            description=row.get("description") or "",
+            provider=row["provider"],
+            category=row["category"],
+            adapter_type=row["adapter_type"],
+            enabled=bool(row["enabled"]),
+            mcp_server_url=row.get("mcp_server_url"),
+            openapi_url=row.get("openapi_url"),
+            base_url=row.get("base_url"),
+            operation_ids=row.get("operation_ids") or [],
+            auth_config=row.get("auth_config") or {},
+            tags=row.get("tags") or [],
+            metadata=row.get("metadata") or {},
+            credential_mode=row.get("credential_mode") or "hosted",
+            credential_id=row.get("credential_id"),
+            credential_name=row.get("credential_name"),
+            credential_environment=row.get("credential_environment") or "production",
+            org_id=row.get("org_id"),
+            created_at=str(row.get("created_at")),
+            updated_at=str(row.get("updated_at")),
         )

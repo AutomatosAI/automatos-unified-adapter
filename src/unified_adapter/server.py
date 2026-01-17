@@ -75,6 +75,10 @@ def _attach_auth(app, settings: Settings) -> None:  # type: ignore[no-untyped-de
         if request.url.path.endswith("/health"):
             return await call_next(request)
 
+        if not settings.adapter_auth_token and not clerk_verifier:
+            request.state.auth = {"type": "anonymous"}
+            return await call_next(request)
+
         auth_header = request.headers.get("authorization", "")
         token = auth_header.replace("Bearer", "").strip()
 
