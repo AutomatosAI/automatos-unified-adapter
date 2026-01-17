@@ -181,13 +181,23 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
         try:
             # Load the tool from registry (includes operations from OpenAPI)
             tools = await registry.load_tools()
-            # AdapterTool uses tool_name, not name; also check by ID or name match
-            adapter_tool = next((t for t in tools if t.tool_name == tool_record.name), None)
+            # Tool names are formatted as mcp_{ToolName}_{OperationId}
+            tool_prefix = f"mcp_{tool_record.name}_".lower()
+            
+            if operation and operation != "default":
+                target_name = f"mcp_{tool_record.name}_{operation}".lower()
+                adapter_tool = next((t for t in tools if t.tool_name.lower() == target_name), None)
+            else:
+                adapter_tool = None
             
             if not adapter_tool:
+                adapter_tool = next((t for t in tools if t.tool_name.lower().startswith(tool_prefix)), None)
+            
+            if not adapter_tool:
+                available = [t.tool_name for t in tools if tool_record.name.lower() in t.tool_name.lower()]
                 return JSONResponse({
                     "error": f"Tool {tool_record.name} could not be loaded from registry",
-                    "details": "OpenAPI spec may be unavailable or invalid"
+                    "details": f"Available matching tools: {available[:5]}"
                 }, status_code=500)
             
             # Build execution payload
@@ -263,13 +273,26 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
         
         try:
             tools = await registry.load_tools()
-            # AdapterTool uses tool_name, not name
-            adapter_tool = next((t for t in tools if t.tool_name == tool_record.name), None)
+            # Tool names are formatted as mcp_{ToolName}_{OperationId}
+            # Find tool matching: mcp_{tool_record.name}_{operation} or any mcp_{tool_record.name}_*
+            tool_prefix = f"mcp_{tool_record.name}_".lower()
+            
+            if operation and operation != "default":
+                # Try exact operation match first
+                target_name = f"mcp_{tool_record.name}_{operation}".lower()
+                adapter_tool = next((t for t in tools if t.tool_name.lower() == target_name), None)
+            else:
+                adapter_tool = None
+            
+            # If no exact match, find any tool from this provider
+            if not adapter_tool:
+                adapter_tool = next((t for t in tools if t.tool_name.lower().startswith(tool_prefix)), None)
             
             if not adapter_tool:
+                available = [t.tool_name for t in tools if tool_record.name.lower() in t.tool_name.lower()]
                 return JSONResponse({
                     "error": f"Tool {tool_record.name} could not be loaded from registry",
-                    "details": "OpenAPI spec may be unavailable or invalid"
+                    "details": f"OpenAPI spec may be unavailable. Available matching tools: {available[:5]}"
                 }, status_code=500)
             
             execution_payload = {**params, "operation": operation}
