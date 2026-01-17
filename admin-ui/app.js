@@ -30,6 +30,7 @@ const templates = {
     auth_config: {},
     tags: ["demo", "openapi"],
     credential_mode: "byo",
+    metadata: {},
   },
   httpbin: {
     name: "Httpbin",
@@ -43,6 +44,7 @@ const templates = {
     auth_config: {},
     tags: ["demo", "httpbin"],
     credential_mode: "byo",
+    metadata: {},
   },
   github: {
     name: "GitHub",
@@ -57,6 +59,7 @@ const templates = {
     auth_config: {},
     tags: ["github", "openapi"],
     credential_mode: "byo",
+    metadata: {},
   },
 };
 
@@ -169,6 +172,7 @@ function openModal(tool = null) {
     toolForm.tags.value = JSON.stringify(tool.tags || []);
     toolForm.operation_ids.value = JSON.stringify(tool.operation_ids || []);
     toolForm.auth_config.value = JSON.stringify(tool.auth_config || {});
+    toolForm.metadata.value = JSON.stringify(tool.metadata || {});
     toolForm.mcp_server_url.value = tool.mcp_server_url || "";
     toolForm.credential_id.value = tool.credential_id || "";
     toolForm.credential_name.value = tool.credential_name || "";
@@ -178,6 +182,7 @@ function openModal(tool = null) {
     toolForm.tags.value = "[]";
     toolForm.operation_ids.value = "[]";
     toolForm.auth_config.value = "{}";
+    toolForm.metadata.value = "{}";
     toolForm.credential_environment.value = "production";
   }
 
@@ -204,6 +209,8 @@ function buildPayload(form) {
     parseJsonField(form.operation_ids.value || "[]", "Operation IDs") || [];
   const authConfig =
     parseJsonField(form.auth_config.value || "{}", "Auth Config") || {};
+  const metadata =
+    parseJsonField(form.metadata.value || "{}", "Metadata") || {};
 
   return {
     name: form.name.value.trim(),
@@ -218,6 +225,7 @@ function buildPayload(form) {
     operation_ids: operationIds,
     auth_config: authConfig,
     tags: tags,
+    metadata: metadata,
     credential_mode: form.credential_mode.value,
     credential_id: form.credential_id.value ? Number(form.credential_id.value) : null,
     credential_name: form.credential_name.value.trim() || null,

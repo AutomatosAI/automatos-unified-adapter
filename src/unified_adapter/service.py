@@ -1,4 +1,4 @@
-"""Core adapter service logic."""
+"""Core adapter service logic (PRD-35 Enhanced)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 
 class AdapterService:
+    """
+    Core adapter service for tool execution.
+    
+    PRD-35 Enhancement:
+    - Supports credential_mode in MCP request meta
+    - "byo" mode: credentials from request payload
+    - "hosted" mode: callback to Automatos /api/tools/credentials/resolve
+    """
+    
     def __init__(
         self,
         settings: Settings,
@@ -30,12 +39,43 @@ class AdapterService:
         self.mcp_executor = McpExecutor()
         self.semaphore = asyncio.Semaphore(settings.adapter_max_concurrency)
 
-    async def execute_tool(self, tool: AdapterTool, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_tool(
+        self,
+        tool: AdapterTool,
+        payload: Dict[str, Any],
+        meta: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a tool with credential resolution.
+        
+        Args:
+            tool: The tool definition
+            payload: Tool execution parameters
+            meta: Request metadata containing credential_mode, tenant_id, etc.
+        
+        Returns:
+            MCP-formatted result
+        """
         async with self.semaphore:
             logger.info("Executing tool=%s payload=%s", tool.tool_name, redact_payload(payload))
+            
+            # Extract execution context from meta (PRD-35)
+            meta = meta or {}
+            credential_mode = meta.get("credential_mode", tool.credential_mode)
+            tenant_id = meta.get("tenant_id")
+            byo_credentials = meta.get("credentials")
 
-            payload_credentials = payload.pop("credentials", None)
-            credentials = await self._resolve_credentials(tool, payload_credentials)
+            # Also check payload for backward compatibility
+            payload_credentials = payload.pop("credentials", None) or byo_credentials
+            
+            # Resolve credentials based on mode
+            credentials = await self._resolve_credentials_v2(
+                tool=tool,
+                credential_mode=credential_mode,
+                tenant_id=tenant_id,
+                byo_credentials=payload_credentials
+            )
+            
             try:
                 if tool.adapter_type == "rest" and tool.rest_operation:
                     result = await self.rest_executor.execute(
@@ -53,9 +93,67 @@ class AdapterService:
                 logger.error("Tool execution failed: %s", exc)
                 return self._format_error(str(exc))
 
-    async def _resolve_credentials(
-        self, tool: AdapterTool, payload_credentials: Optional[Dict[str, Any]]
+    async def _resolve_credentials_v2(
+        self,
+        tool: AdapterTool,
+        credential_mode: str,
+        tenant_id: Optional[str],
+        byo_credentials: Optional[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
+        """
+        PRD-35: Resolve credentials based on mode.
+        
+        Args:
+            tool: The tool definition
+            credential_mode: "byo" or "hosted"
+            tenant_id: Tenant UUID (required for hosted mode)
+            byo_credentials: Credentials from request (for BYO mode)
+        
+        Returns:
+            Resolved credential data
+        """
+        # BYO Mode: Use credentials from request
+        if credential_mode == "byo":
+            if not byo_credentials:
+                raise ExecutionError("Missing credentials for BYO tool call")
+            logger.info("Using BYO credentials for tool=%s", tool.tool_name)
+            return byo_credentials
+        
+        # Hosted Mode: Callback to Automatos
+        if credential_mode == "hosted":
+            if not tenant_id:
+                raise ExecutionError("tenant_id required for hosted credential mode")
+            
+            # Extract tool name from adapter tool (remove mcp_ prefix and method)
+            tool_name = self._extract_tool_name(tool.tool_name)
+            
+            logger.info(
+                "Resolving hosted credentials: tenant=%s tool=%s",
+                tenant_id, tool_name
+            )
+            
+            resolved = await self.automatos_client.resolve_tool_credential(
+                tenant_id=tenant_id,
+                tool_name=tool_name,
+                service_name=self.settings.service_name
+            )
+            
+            if not resolved:
+                raise ExecutionError(
+                    f"Hosted credential not found for tool '{tool_name}' in tenant"
+                )
+            
+            return resolved
+        
+        # Legacy mode: Use tool's credential_ref
+        return await self._resolve_credentials_legacy(tool, byo_credentials)
+    
+    async def _resolve_credentials_legacy(
+        self,
+        tool: AdapterTool,
+        payload_credentials: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Legacy credential resolution using tool.credential_ref."""
         if tool.credential_mode == "byo":
             if not payload_credentials:
                 raise ExecutionError("Missing credentials for BYO tool call")
@@ -94,6 +192,17 @@ class AdapterService:
             return resolved
 
         raise ExecutionError("Hosted credential reference missing")
+    
+    def _extract_tool_name(self, tool_name: str) -> str:
+        """
+        Extract the base tool name from a full tool name.
+        
+        E.g., "mcp_github_repos_list" -> "github"
+        """
+        if tool_name.startswith("mcp_"):
+            parts = tool_name[4:].split("_", 1)  # Remove "mcp_" and split
+            return parts[0] if parts else tool_name
+        return tool_name
 
     def _format_result(self, result: Any) -> Dict[str, Any]:
         return {"content": [{"type": "json", "json": result}]}

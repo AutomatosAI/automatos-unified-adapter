@@ -49,7 +49,18 @@ def _tool_handler(
     service: AdapterService, tool: Any
 ) -> Callable[[Any], Awaitable[Dict[str, Any]]]:
     async def handler(payload: tool.input_model) -> Dict[str, Any]:
-        return await service.execute_tool(tool, payload.model_dump())
+        payload_dict = payload.model_dump()
+        
+        # PRD-35: Extract meta from payload if present
+        # Meta can contain: credential_mode, tenant_id, credentials (for BYO)
+        meta = payload_dict.pop("_meta", None) or payload_dict.pop("meta", None)
+        
+        # Also check for execution context (passed from Automatos)
+        execution_context = payload_dict.pop("_execution_context", None)
+        if execution_context and not meta:
+            meta = execution_context
+        
+        return await service.execute_tool(tool, payload_dict, meta=meta)
 
     handler.__name__ = tool.tool_name
     return handler

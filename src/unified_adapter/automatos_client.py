@@ -99,3 +99,67 @@ class AutomatosClient:
         if isinstance(payload, dict):
             return payload.get("items", [])
         return []
+
+    async def resolve_tool_credential(
+        self,
+        tenant_id: str,
+        tool_name: str,
+        service_name: str = "unified-adapter",
+        environment: str = "production",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        PRD-35: Resolve credentials for a tool by tenant_id and tool_name.
+        
+        This calls the new /api/tools/credentials/resolve endpoint which
+        looks up the credential via tenant_tool_config.
+        
+        Args:
+            tenant_id: UUID of the tenant
+            tool_name: Name of the tool (adapter_tool_id)
+            service_name: Name of the calling service (for audit)
+            environment: Credential environment (default: production)
+        
+        Returns:
+            Decrypted credential data, or None if not found
+        """
+        url = f"{self.base_url}/api/tools/credentials/resolve"
+        payload: Dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "tool_name": tool_name,
+            "service_name": service_name,
+            "environment": environment,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds, verify=self.verify_ssl) as client:
+                response = await client.post(url, headers=self._headers(), json=payload)
+                
+                if response.status_code == 404:
+                    logger.warning(
+                        "Credential not found: tenant=%s tool=%s",
+                        tenant_id, tool_name
+                    )
+                    return None
+                
+                response.raise_for_status()
+                data = response.json()
+
+            if isinstance(data, dict):
+                if data.get("success"):
+                    return data.get("data")
+                else:
+                    error = data.get("error", {})
+                    logger.warning(
+                        "Credential resolution failed: %s - %s",
+                        error.get("code"), error.get("message")
+                    )
+                    return None
+            
+            return None
+            
+        except httpx.HTTPError as e:
+            logger.error("HTTP error resolving credential: %s", e)
+            return None
+        except Exception as e:
+            logger.error("Error resolving credential: %s", e)
+            return None
