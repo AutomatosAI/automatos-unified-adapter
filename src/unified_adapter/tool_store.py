@@ -95,6 +95,14 @@ class ToolStore:
             ).fetchone()
         return self._to_record(row) if row else None
 
+    def get_tool_by_name(self, name: str) -> Optional[ToolRecord]:
+        """Find a tool by name (case-insensitive)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM adapter_tools WHERE LOWER(name) = LOWER(%s)", (name,)
+            ).fetchone()
+        return self._to_record(row) if row else None
+
     def create_tool(self, payload: Dict[str, Any]) -> ToolRecord:
         now = datetime.utcnow()
         with self._connect() as conn:

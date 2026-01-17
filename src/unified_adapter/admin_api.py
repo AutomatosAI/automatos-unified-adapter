@@ -146,7 +146,12 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
         # Get the tool record
         tool_record = store.get_tool(tool_id)
         if not tool_record:
-            return JSONResponse({"error": f"Tool {tool_id} not found"}, status_code=404)
+            # Try to find by name from payload (cross-system ID mismatch handling)
+            tool_name = payload.get("tool_name") or payload.get("name")
+            if tool_name:
+                tool_record = store.get_tool_by_name(tool_name)
+            if not tool_record:
+                return JSONResponse({"error": f"Tool {tool_id} not found"}, status_code=404)
         
         if not tool_record.enabled:
             return JSONResponse({"error": f"Tool {tool_record.name} is disabled"}, status_code=400)
@@ -216,12 +221,87 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
                 "tool": tool_record.name
             }, status_code=500)
 
+    async def execute_tool_by_name(request: Request) -> JSONResponse:
+        """Execute a tool by name with provided payload and credentials."""
+        auth = _require_auth(request)
+        tool_name = request.path_params["tool_name"]
+        
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        
+        # Get the tool record by name
+        tool_record = store.get_tool_by_name(tool_name)
+        if not tool_record:
+            return JSONResponse({"error": f"Tool '{tool_name}' not found"}, status_code=404)
+        
+        if not tool_record.enabled:
+            return JSONResponse({"error": f"Tool {tool_record.name} is disabled"}, status_code=400)
+        
+        # Extract execution parameters
+        operation = payload.pop("operation", None) or payload.pop("method", "default")
+        params = payload.pop("params", payload.pop("parameters", {}))
+        credentials = payload.pop("credentials", None)
+        meta = payload.pop("meta", None) or payload.pop("_meta", {})
+        
+        from .tool_registry import ToolRegistry
+        from .service import AdapterService
+        from .openapi import OpenAPILoader
+        from .automatos_client import AutomatosClient
+        from .config import get_settings
+        
+        settings = get_settings()
+        automatos_client = AutomatosClient(
+            base_url=settings.automatos_api_base_url,
+            api_key=settings.automatos_api_key,
+        )
+        openapi_loader = OpenAPILoader(cache_seconds=settings.adapter_openapi_cache_seconds)
+        registry = ToolRegistry(settings, store, openapi_loader)
+        service = AdapterService(settings, automatos_client, registry)
+        
+        try:
+            tools = await registry.load_tools()
+            adapter_tool = next((t for t in tools if t.name == tool_record.name), None)
+            
+            if not adapter_tool:
+                return JSONResponse({
+                    "error": f"Tool {tool_record.name} could not be loaded from registry",
+                    "details": "OpenAPI spec may be unavailable or invalid"
+                }, status_code=500)
+            
+            execution_payload = {**params, "operation": operation}
+            execution_meta = {**meta}
+            if credentials:
+                execution_meta["credentials"] = credentials
+                execution_meta["credential_mode"] = "byo"
+            elif meta.get("tenant_id"):
+                execution_meta["credential_mode"] = "hosted"
+            
+            result = await service.execute_tool(adapter_tool, execution_payload, meta=execution_meta)
+            
+            return JSONResponse({
+                "success": True,
+                "tool": tool_record.name,
+                "operation": operation,
+                "result": result
+            })
+            
+        except Exception as e:
+            logger.exception(f"Tool execution failed: {tool_record.name}")
+            return JSONResponse({
+                "success": False,
+                "error": str(e),
+                "tool": tool_record.name
+            }, status_code=500)
+
     app.add_route("/admin/tools", list_tools, methods=["GET"])
     app.add_route("/admin/tools", create_tool, methods=["POST"])
     app.add_route("/admin/tools/{tool_id:int}", get_tool, methods=["GET"])
     app.add_route("/admin/tools/{tool_id:int}", update_tool, methods=["PUT"])
     app.add_route("/admin/tools/{tool_id:int}", delete_tool, methods=["DELETE"])
     app.add_route("/admin/tools/{tool_id:int}/execute", execute_tool, methods=["POST"])
+    app.add_route("/admin/tools/name/{tool_name:str}/execute", execute_tool_by_name, methods=["POST"])
 
 
 def _require_auth(request) -> AuthContext:  # type: ignore[no-untyped-def]
