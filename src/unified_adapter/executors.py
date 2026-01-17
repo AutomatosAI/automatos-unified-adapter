@@ -74,7 +74,7 @@ class RestExecutor:
         payload: Dict[str, Any],
         credentials: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: Dict[str, str] = {}
         query: Dict[str, str] = {}
 
         injector = CredentialInjector(tool)
@@ -83,28 +83,73 @@ class RestExecutor:
         query.update(auth_query)
 
         url, used_keys = self._build_url(operation.base_url, operation.path, payload)
-        query.update(self._extract_query_params(payload, used_keys))
-
-        body = payload.get("body")
-        if body is not None:
-            body_data = json.dumps(body)
+        
+        # Determine request body based on HTTP method
+        method = operation.method.upper()
+        body_data: Optional[str] = None
+        form_data: Optional[Dict[str, str]] = None
+        
+        # For POST/PUT/PATCH: put remaining params in body (unless explicit 'body' key)
+        if method in ("POST", "PUT", "PATCH"):
+            explicit_body = payload.get("body")
+            if explicit_body is not None:
+                # Explicit body takes precedence
+                headers["Content-Type"] = "application/json"
+                body_data = json.dumps(explicit_body)
+                # Any other params go to query
+                query.update(self._extract_query_params(payload, used_keys | {"body"}))
+            else:
+                # Auto-detect: check tool metadata for content type hint
+                adapter_meta = (tool.metadata or {}).get("adapter", {})
+                content_type = adapter_meta.get("content_type", "application/x-www-form-urlencoded")
+                
+                # Extract params for body (exclude path-used keys and 'operation')
+                body_params = self._extract_body_params(payload, used_keys | {"operation"})
+                
+                if body_params:
+                    if content_type == "application/json":
+                        headers["Content-Type"] = "application/json"
+                        body_data = json.dumps(body_params)
+                    else:
+                        # Default: form-urlencoded (works for Slack and most APIs)
+                        headers["Content-Type"] = "application/x-www-form-urlencoded"
+                        form_data = body_params
         else:
-            body_data = None
+            # GET/DELETE: use query params
+            headers["Content-Type"] = "application/json"
+            query.update(self._extract_query_params(payload, used_keys))
 
         attempt = 0
         while True:
             attempt += 1
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
-                    response = await client.request(
-                        operation.method.upper(),
-                        url,
-                        headers=headers,
-                        params=query,
-                        content=body_data,
-                    )
+                    if form_data:
+                        response = await client.request(
+                            method,
+                            url,
+                            headers=headers,
+                            params=query,
+                            data=form_data,
+                        )
+                    else:
+                        response = await client.request(
+                            method,
+                            url,
+                            headers=headers,
+                            params=query,
+                            content=body_data,
+                        )
                 response.raise_for_status()
-                return response.json() if response.content else {"status": "ok"}
+                result = response.json() if response.content else {"status": "ok"}
+                
+                # Handle Slack-style responses where ok=false means error despite 200 OK
+                if isinstance(result, dict) and result.get("ok") is False:
+                    error_msg = result.get("error", "Unknown API error")
+                    logger.warning("API returned ok=false: %s", error_msg)
+                    # Still return result so caller can see the error details
+                
+                return result
             except Exception as exc:
                 if attempt > self.max_retries:
                     raise ExecutionError(str(exc)) from exc
@@ -137,6 +182,19 @@ class RestExecutor:
             if isinstance(value, (str, int, float, bool)):
                 query[key] = str(value)
         return query
+
+    def _extract_body_params(self, payload: Dict[str, Any], exclude_keys: set[str]) -> Dict[str, str]:
+        """Extract parameters for form body (excludes path params and special keys)."""
+        body: Dict[str, str] = {}
+        for key, value in payload.items():
+            if key in exclude_keys:
+                continue
+            if isinstance(value, (str, int, float, bool)):
+                body[key] = str(value)
+            elif value is not None:
+                # JSON-encode complex values
+                body[key] = json.dumps(value)
+        return body
 
 
 class McpExecutor:
