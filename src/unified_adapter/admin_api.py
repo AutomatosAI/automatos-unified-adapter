@@ -184,14 +184,40 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
             # Tool names are formatted as mcp_{ToolName}_{OperationId}
             tool_prefix = f"mcp_{tool_record.name}_".lower()
             
-            if operation and operation != "default":
-                target_name = f"mcp_{tool_record.name}_{operation}".lower()
-                adapter_tool = next((t for t in tools if t.tool_name.lower() == target_name), None)
-            else:
-                adapter_tool = None
+            # Get all tools for this provider
+            provider_tools = [t for t in tools if t.tool_name.lower().startswith(tool_prefix)]
+            adapter_tool = None
             
-            if not adapter_tool:
-                adapter_tool = next((t for t in tools if t.tool_name.lower().startswith(tool_prefix)), None)
+            if operation and operation != "default":
+                # Try exact operation match first
+                target_name = f"mcp_{tool_record.name}_{operation}".lower()
+                adapter_tool = next((t for t in provider_tools if t.tool_name.lower() == target_name), None)
+                
+                # Try fuzzy matching on operation keywords
+                if not adapter_tool:
+                    # Normalize operation: post_message -> ["post", "message"]
+                    op_keywords = [k.lower() for k in operation.replace("_", " ").replace("-", " ").split()]
+                    
+                    # Score tools by how many keywords they match
+                    scored_tools = []
+                    for t in provider_tools:
+                        tool_lower = t.tool_name.lower()
+                        # Count matching keywords
+                        matches = sum(1 for kw in op_keywords if kw in tool_lower)
+                        if matches > 0:
+                            scored_tools.append((t, matches))
+                    
+                    # Sort by match count (descending) and prefer shorter names (more specific)
+                    scored_tools.sort(key=lambda x: (-x[1], len(x[0].tool_name)))
+                    
+                    if scored_tools:
+                        adapter_tool = scored_tools[0][0]
+                        logger.info(f"Fuzzy matched operation '{operation}' to tool '{adapter_tool.tool_name}'")
+            
+            # If still no match, use first tool from provider (but warn)
+            if not adapter_tool and provider_tools:
+                adapter_tool = provider_tools[0]
+                logger.warning(f"No operation match for '{operation}', falling back to first tool: {adapter_tool.tool_name}")
             
             if not adapter_tool:
                 available = [t.tool_name for t in tools if tool_record.name.lower() in t.tool_name.lower()]
@@ -277,16 +303,40 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
             # Find tool matching: mcp_{tool_record.name}_{operation} or any mcp_{tool_record.name}_*
             tool_prefix = f"mcp_{tool_record.name}_".lower()
             
+            # Get all tools for this provider
+            provider_tools = [t for t in tools if t.tool_name.lower().startswith(tool_prefix)]
+            adapter_tool = None
+            
             if operation and operation != "default":
                 # Try exact operation match first
                 target_name = f"mcp_{tool_record.name}_{operation}".lower()
-                adapter_tool = next((t for t in tools if t.tool_name.lower() == target_name), None)
-            else:
-                adapter_tool = None
+                adapter_tool = next((t for t in provider_tools if t.tool_name.lower() == target_name), None)
+                
+                # Try fuzzy matching on operation keywords
+                if not adapter_tool:
+                    # Normalize operation: post_message -> ["post", "message"]
+                    op_keywords = [k.lower() for k in operation.replace("_", " ").replace("-", " ").split()]
+                    
+                    # Score tools by how many keywords they match
+                    scored_tools = []
+                    for t in provider_tools:
+                        tool_lower = t.tool_name.lower()
+                        # Count matching keywords
+                        matches = sum(1 for kw in op_keywords if kw in tool_lower)
+                        if matches > 0:
+                            scored_tools.append((t, matches))
+                    
+                    # Sort by match count (descending) and prefer shorter names (more specific)
+                    scored_tools.sort(key=lambda x: (-x[1], len(x[0].tool_name)))
+                    
+                    if scored_tools:
+                        adapter_tool = scored_tools[0][0]
+                        logger.info(f"Fuzzy matched operation '{operation}' to tool '{adapter_tool.tool_name}'")
             
-            # If no exact match, find any tool from this provider
-            if not adapter_tool:
-                adapter_tool = next((t for t in tools if t.tool_name.lower().startswith(tool_prefix)), None)
+            # If still no match, use first tool from provider (but warn)
+            if not adapter_tool and provider_tools:
+                adapter_tool = provider_tools[0]
+                logger.warning(f"No operation match for '{operation}', falling back to first tool: {adapter_tool.tool_name}")
             
             if not adapter_tool:
                 available = [t.tool_name for t in tools if tool_record.name.lower() in t.tool_name.lower()]
