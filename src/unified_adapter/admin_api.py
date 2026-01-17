@@ -181,7 +181,8 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
         try:
             # Load the tool from registry (includes operations from OpenAPI)
             tools = await registry.load_tools()
-            adapter_tool = next((t for t in tools if t.id == tool_id or t.name == tool_record.name), None)
+            # AdapterTool uses tool_name, not name; also check by ID or name match
+            adapter_tool = next((t for t in tools if t.tool_name == tool_record.name), None)
             
             if not adapter_tool:
                 return JSONResponse({
@@ -262,7 +263,8 @@ def mount_admin_api(app, store: ToolStore) -> None:  # type: ignore[no-untyped-d
         
         try:
             tools = await registry.load_tools()
-            adapter_tool = next((t for t in tools if t.name == tool_record.name), None)
+            # AdapterTool uses tool_name, not name
+            adapter_tool = next((t for t in tools if t.tool_name == tool_record.name), None)
             
             if not adapter_tool:
                 return JSONResponse({
