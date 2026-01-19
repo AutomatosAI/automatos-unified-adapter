@@ -80,11 +80,14 @@ class ToolStore:
             conn.execute("ALTER TABLE adapter_tools ADD COLUMN IF NOT EXISTS metadata JSONB")
 
     def list_tools(self, enabled_only: bool = True) -> List[ToolRecord]:
+        # TEMPORARY: Whitelist to prevent DB overload from 1300+ tools
+        ALLOWED_PROVIDERS = ["slack", "github", "gmail"]
+        
         with self._connect() as conn:
-            query = "SELECT * FROM adapter_tools"
-            params: List[Any] = []
+            query = "SELECT * FROM adapter_tools WHERE LOWER(provider) = ANY(%s)"
+            params: List[Any] = [ALLOWED_PROVIDERS]
             if enabled_only:
-                query += " WHERE enabled = TRUE"
+                query += " AND enabled = TRUE"
             rows = conn.execute(query, params).fetchall()
         return [self._to_record(row) for row in rows]
 
