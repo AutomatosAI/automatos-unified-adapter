@@ -66,6 +66,11 @@ class AdapterService:
             byo_credentials = meta.get("credentials")
             payload_credentials = payload.pop("credentials", None)
             
+            # IMPORTANT: Also check for 'token' in payload (Slack and other APIs use this)
+            # If token is present, it's BYO mode
+            if not payload_credentials and "token" in payload:
+                payload_credentials = {"token": payload["token"]}
+            
             # Merge credentials (payload takes precedence)
             final_credentials = payload_credentials or byo_credentials
             
@@ -133,9 +138,6 @@ class AdapterService:
         
         # Hosted Mode: Callback to Automatos
         if credential_mode == "hosted":
-            if not tenant_id:
-                raise ExecutionError("tenant_id required for hosted credential mode")
-            
             # Extract tool name from adapter tool (remove mcp_ prefix and method)
             tool_name = self._extract_tool_name(tool.tool_name)
             
