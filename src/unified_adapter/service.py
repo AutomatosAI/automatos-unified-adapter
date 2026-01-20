@@ -61,19 +61,31 @@ class AdapterService:
             
             # Extract execution context from meta (PRD-35)
             meta = meta or {}
-            credential_mode = meta.get("credential_mode", tool.credential_mode)
-            tenant_id = meta.get("tenant_id")
+            
+            # Check for credentials in both meta and payload
             byo_credentials = meta.get("credentials")
-
-            # Also check payload for backward compatibility
-            payload_credentials = payload.pop("credentials", None) or byo_credentials
+            payload_credentials = payload.pop("credentials", None)
+            
+            # Merge credentials (payload takes precedence)
+            final_credentials = payload_credentials or byo_credentials
+            
+            # Auto-detect credential mode:
+            # If credentials are provided in request, it's BYO mode (no tenant_id needed)
+            # Otherwise, use meta.credential_mode or tool default
+            if final_credentials:
+                credential_mode = "byo"
+                logger.info("Auto-detected BYO mode (credentials in request)")
+            else:
+                credential_mode = meta.get("credential_mode", tool.credential_mode)
+            
+            tenant_id = meta.get("tenant_id")
             
             # Resolve credentials based on mode
             credentials = await self._resolve_credentials_v2(
                 tool=tool,
                 credential_mode=credential_mode,
                 tenant_id=tenant_id,
-                byo_credentials=payload_credentials
+                byo_credentials=final_credentials
             )
             
             try:
